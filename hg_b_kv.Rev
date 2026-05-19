@@ -52,8 +52,15 @@ two_beta ~ dnLognormal(0, sd = 2 * 0.587405)
 moves.append( mvScale(two_beta, weight = 1.0 ) )
 
 n_beta_categories = 4
+
+# It would be more robust to replace this with 
+# fnDiscretizeDistribution( dnBeta (beta_scale, beta_scale), n_beta_categories)
+# See: https://github.com/revbayes/revbayes/issues/167
+# This came to light midway through analyses, so for consistent results,
+# we have retained:
 neo_beta_cats := fnDiscretizeBeta(neo_beta, neo_beta, n_beta_categories)
 two_beta_cats := fnDiscretizeBeta(two_beta, two_beta, n_beta_categories)
+
 matrix_probs ~ dnDirichlet( rep(1, n_beta_categories) )
 moves.append( mvBetaSimplex( matrix_probs, weight = 1.0 ) )
 moves.append( mvDirichletSimplex ( matrix_probs, weight = 1.0 ) )

@@ -2,9 +2,13 @@ print("Timestamp:", time("year"), time("day"), time("seconds") / 60 / 60)
 burninGen = 12000
 runGen = 2000
 steps = 128
+ckpInterval = 100
 
-ppFile = "07206_hg_b_kv.pp"
-ppOut = "07206_hg_b_kv.out.pp"
+ppFile        = "07206_hg_b_kv.pp"
+ppOut         = "07206_hg_b_kv.out.pp"
+ckpBurnin     = "07206_hg_b_kv.burnin.ckp"
+ckpBurninDone = "07206_hg_b_kv.burnin.done"
+ckpRun        = "07206_hg_b_kv.run.ckp"
 
 
 if (fileExists(ppOut)) {
@@ -26,12 +30,49 @@ power_p = powerPosterior(mymodel, monitors, moves, ppFile, cats = steps - 1)
 print("  - Created powerPosterior object")
 
 
-power_p.burnin(generations = burninGen, tuningInterval = 1000)
+# Global pre-burnin: resume if a checkpoint exists; .burnin(0) reloads the
+# completed post-burnin sampler state without extra iterations.
+if (fileExists(ckpBurninDone)) {
+  print("  - Burnin previously completed; loading post-burnin state")
+  power_p.initializeFromCheckpoint(ckpBurnin)
+  power_p.burnin(generations = 0, tuningInterval = 1)
+} else {
+  if (fileExists(ckpBurnin)) {
+    print("  - Resuming partial burnin")
+    power_p.initializeFromCheckpoint(ckpBurnin)
+  }
+  print("  - Commencing powerPosterior burnin at", time("year"), time("day"),
+        time("seconds") / 60 / 60)
+  power_p.burnin(generations = burninGen, tuningInterval = 1000,
+                 checkpointFile = ckpBurnin, checkpointInterval = ckpInterval)
+  write("done", file = ckpBurninDone)
+}
+
+
+# Stone sampling: enumerate per-stone checkpoints written by power_p.run().
+# appendToStem("07206_hg_b_kv.run.ckp", "_stone_K") → "07206_hg_b_kv.run_stone_K.ckp".
+# Flat-mode initializeFromCheckpoint() will throw if any listed stone lacks a
+# checkpoint, so we only pass indices we have confirmed.
+nFound = 0
+for (i in 1:steps) {
+  stoneFile = "07206_hg_b_kv.run_stone_" + i + ".ckp"
+  if (fileExists(stoneFile)) {
+    nFound = nFound + 1
+    runStones[nFound] = i
+  }
+}
+
+if (nFound > 0) {
+  print("  - Resuming run phase from " + nFound + " stone checkpoint(s)")
+  power_p.initializeFromCheckpoint(ckpRun, runStones)
+}
 print("  - Commencing powerPosterior run at", time("year"), time("day"),
       time("seconds") / 60 / 60)
-power_p.run(generations = runGen)
+power_p.run(generations = runGen, checkpointFile = ckpRun,
+            checkpointInterval = ckpInterval)
 print("  - Completed powerPosterior run at", time("year"), time("day"),
       time("seconds") / 60 / 60)
+
 
 ss = steppingStoneSampler(
   file = ppFile,
@@ -39,18 +80,21 @@ ss = steppingStoneSampler(
   likelihoodColumnName = "likelihood"
 )
 write(ss.marginal(), file = ppOut)
-print("  Stepping stone marginal likelihood:")
-ss.marginal()
-
+print("  Stepping stone marginal likelihood:", ss.marginal(),
+      "; SE: ", ss.stdError())
 
 ps = pathSampler(
   file = ppFile,
   powerColumnName = "power",
   likelihoodColumnName = "likelihood"
 )
-write(ss.marginal(), ps.marginal(), burninGen, runGen, steps, "\n", file = ppOut)
-print("  Path sampler marginal likelihood:")
-ps.marginal()
+write(ss.marginal(), ps.marginal(), burninGen, runGen, steps,
+      ss.stdError(), ps.stdError(),
+      ss.stdError(bootstrap = TRUE), ps.stdError(bootstrap = TRUE),
+      "\n", file = ppOut)
+print("  Path sampler marginal likelihood:", ps.marginal(),
+      "; SE: ", ps.stdError())
+
 
 print("  # # # RUN COMPLETE # # #  ")
 print("Timestamp:", time("year"), time("day"), time("seconds"))
